@@ -4,12 +4,6 @@
 #include <U8g2lib.h>
 #include <U8x8lib.h>
 
-//#include <Wire.h>  
-//#include "SSD1306Wire.h"
-
-// for 128x64 displays:
-//SSD1306Wire display(0x3c, SDA, SCL);  // ADDRESS, SDA, SCL
-
 char serialRead;
 String serialBuf;
 int wifiAttempts = 0;
@@ -19,9 +13,10 @@ String apiKey;
 String stationCode;
 String wifiSsid = "acquiring...";
 String ipAddress = "acquiring...";
+String currentTime = "00:00";
 
 const char* server = "lite.realtime.nationalrail.co.uk";
-const int maxRows = 10;
+const int maxRows = 5;
 
 String destinations[maxRows];
 String runTimes[maxRows];
@@ -64,6 +59,9 @@ void setup() {
   Serial.println("\n\nok");
   u8g2.begin();
 
+  Serial.print("Display width: ");
+  Serial.println(u8g2.getDisplayWidth());
+
   apiKey = ReadEepromWord(64, 64);
   stationCode = ReadEepromWord(128, 8);
 
@@ -81,9 +79,11 @@ void setup() {
 //  display.drawString(50, 5, stationCode);
 //  display.display();
 
+  u8g2.drawBox(239, 0, 14, 64);
   DisplayIntro();
   ConnectWiFi();
-  DisplayIntro();
+  DisplayString(0, 64, "Getting train times...");
+  u8g2.sendBuffer();
 }
 
 void loop() {
@@ -140,6 +140,8 @@ void GetTrainTimes() {
                   platforms[serviceIndex] = buf;
                 } else if (path == "/?xml/soap:Envelope/soap:Body/GetDepartureBoardResponse/GetStationBoardResult/lt5:trainServices/lt5:service/lt4:length") {
                   carriages[serviceIndex] = buf;
+                } else if (path == "/?xml/soap:Envelope/soap:Body/GetDepartureBoardResponse/GetStationBoardResult/lt4:generatedAt") {
+                  currentTime = buf;
                 }
               }
               
@@ -165,7 +167,7 @@ void GetTrainTimes() {
           Serial.print("  ");
           Serial.print(destinations[i] + pad(destinations[i], 24));
           Serial.print("  ");
-          Serial.print(pad(dueTimes[i], 7) + dueTimes[i]);
+          Serial.print(pad(dueTimes[i], 10) + dueTimes[i]);
           Serial.print("  ");
           Serial.print(pad(platforms[i], 8) + platforms[i]);
           Serial.print("  ");
@@ -173,7 +175,7 @@ void GetTrainTimes() {
           Serial.print("\n");
         }
 
-        DisplayTimes();
+        DisplayTimetable();
 
         /* if the server disconnected, stop the client */
         if (!client.connected()) {
@@ -240,6 +242,8 @@ byte GetStringChecksum(String toChecksum) {
 void ConnectWiFi() {
   Serial.println("Reading WiFi Credentials from EEPROM... ");
   wifiSsid = ReadEepromWord(0, 32);
+  DisplayIntro();
+  
   Serial.println("  WiFi SSID: " + wifiSsid);
   String wifiPwd = ReadEepromWord(32, 32);
   Serial.println("  WiFi Password: " + wifiPwd.substring(0, 5) + "****");
@@ -257,6 +261,7 @@ void ConnectWiFi() {
       Serial.print("Connected\nIP address: ");
       Serial.println(WiFi.localIP());
       ipAddress = WiFi.localIP().toString();
+      DisplayIntro();
       wifiConnected = true;
     } else {
       Serial.println("WARN: Failed to connect to WiFi");
@@ -313,36 +318,60 @@ void DisplayIntro() {
   u8g2.drawStr(10, 40, "IP Address:");
   DisplayString(80, 40, ipAddress);
 
-//  u8g2.drawStr(80, 20, wifiSsid);
-//  u8g2.drawStr(80, 30, stationCode);
-  
-  
   u8g2.sendBuffer();
-
-  //  display.drawString(5, 5, "Station:");
-//  display.drawString(5, 30, "Connecting...");
-//
-//  display.drawString(50, 5, stationCode);
 }
 
 void DisplayString(int x, int y, String str) {
   char c[str.length() + 1];
   str.toCharArray(c, str.length() + 1);
   u8g2.drawStr(x, y, c);
+//  u8g2.sendBuffer();
 }
 
-void DisplayTimes() {
-//  display.clear();
-//
-//  for (int i = 0; i < maxRows; i++) {
-//    display.drawString(0, i * 10, runTimes[i]);
-//    display.drawString(30, i * 10, destinations[i]);
-//    display.setColor(BLACK);
-//    display.fillRect(90,  i * 10, 42, 10);
-//    display.setColor(WHITE);
-//    display.drawString(93, i * 10, dueTimes[i]);
-//  }
-//
-//  display.display();
+int MeasureString(String str) {
+  char c[str.length() + 1];
+  str.toCharArray(c, str.length() + 1);
+  return u8g2.getStrWidth(c);
+}
+
+char* StringToChar(String str) {
+  char c[str.length() + 1];
+  str.toCharArray(c, str.length() + 1);
+
+  return c;
+}
+
+void DisplayTime() {
+  String timePart = currentTime.substring(currentTime.indexOf('T') + 1);
+  String hourMinute = timePart.substring(0, 5);
+
+  int timeWidth = MeasureString(hourMinute);
+  int timeLeft = (256 - timeWidth) / 2;
+
+  u8g2.setFont(u8g2_font_crox1hb_tr);
+  DisplayString(timeLeft, 64, hourMinute);
+}
+
+void DisplayRow(int row, String runTime, String destination, String due) {
+  int x = ((row + 1) * 10) - 1;
+  int dueWidth = MeasureString(due);
+  
+  DisplayString(0, x, runTime);
+  DisplayString(30, x, destination);
+  DisplayString(256 - dueWidth, x, due);
+}
+
+void DisplayTimetable() {
+  u8g2.clearBuffer();
+
+  DisplayTime();
+
+  u8g2.setFont(u8g2_font_finderskeepers_tr);
+
+  for (int i = 0; i < maxRows; i++) {
+    DisplayRow(i, runTimes[i], destinations[i], dueTimes[i]);
+  }
+
+  u8g2.sendBuffer();
 }
 
