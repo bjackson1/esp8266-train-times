@@ -1,11 +1,14 @@
 #include <EEPROM.h>
 #include <ESP8266WiFi.h>
 #include <WiFiClientSecure.h>
-#include <Wire.h>  
-#include "SSD1306Wire.h"
+#include <U8g2lib.h>
+#include <U8x8lib.h>
+
+//#include <Wire.h>  
+//#include "SSD1306Wire.h"
 
 // for 128x64 displays:
-SSD1306Wire display(0x3c, SDA, SCL);  // ADDRESS, SDA, SCL
+//SSD1306Wire display(0x3c, SDA, SCL);  // ADDRESS, SDA, SCL
 
 char serialRead;
 String serialBuf;
@@ -14,6 +17,8 @@ bool wifiConnected = false;
 int nextConnect = 10000;
 String apiKey;
 String stationCode;
+String wifiSsid = "acquiring...";
+String ipAddress = "acquiring...";
 
 const char* server = "lite.realtime.nationalrail.co.uk";
 const int maxRows = 10;
@@ -49,12 +54,15 @@ const String httpRequest = "POST /OpenLDBWS/ldb9.asmx HTTP/1.1\r\n"
   "Content-Length: ";
 
 WiFiClientSecure client;
+U8G2_SSD1322_NHD_256X64_F_4W_SW_SPI u8g2(U8G2_R0, D5, D7, D8, D6);
+
 
 void setup() {
   Serial.begin(115200);
   EEPROM.begin(1024);
   client.setInsecure();
   Serial.println("\n\nok");
+  u8g2.begin();
 
   apiKey = ReadEepromWord(64, 64);
   stationCode = ReadEepromWord(128, 8);
@@ -62,18 +70,20 @@ void setup() {
   Serial.println("API Key: " + apiKey);
   Serial.println("Station Code: " + stationCode);
 
-  display.init();
-  display.flipScreenVertically();
-  display.clear();
-//    display.setTextAlignment(TEXT_ALIGN_LEFT);
-  display.setFont(ArialMT_Plain_10);
-  display.drawString(5, 5, "Station:");
-  display.drawString(5, 30, "Connecting...");
+//  display.init();
+//  display.flipScreenVertically();
+//  display.clear();
+////    display.setTextAlignment(TEXT_ALIGN_LEFT);
+//  display.setFont(ArialMT_Plain_10);
+//  display.drawString(5, 5, "Station:");
+//  display.drawString(5, 30, "Connecting...");
+//
+//  display.drawString(50, 5, stationCode);
+//  display.display();
 
-  display.drawString(50, 5, stationCode);
-  display.display();
-
+  DisplayIntro();
   ConnectWiFi();
+  DisplayIntro();
 }
 
 void loop() {
@@ -229,7 +239,7 @@ byte GetStringChecksum(String toChecksum) {
 
 void ConnectWiFi() {
   Serial.println("Reading WiFi Credentials from EEPROM... ");
-  String wifiSsid = ReadEepromWord(0, 32);
+  wifiSsid = ReadEepromWord(0, 32);
   Serial.println("  WiFi SSID: " + wifiSsid);
   String wifiPwd = ReadEepromWord(32, 32);
   Serial.println("  WiFi Password: " + wifiPwd.substring(0, 5) + "****");
@@ -246,6 +256,7 @@ void ConnectWiFi() {
     if (WiFi.status() == WL_CONNECTED) {
       Serial.print("Connected\nIP address: ");
       Serial.println(WiFi.localIP());
+      ipAddress = WiFi.localIP().toString();
       wifiConnected = true;
     } else {
       Serial.println("WARN: Failed to connect to WiFi");
@@ -288,18 +299,50 @@ String pad(String str, int padLen) {
   return ret;
 }
 
+void DisplayIntro() {
+  u8g2.clearBuffer();
+  u8g2.setFont(u8g2_font_haxrcorp4089_tr);
+  u8g2.drawStr(0, 7, "Initialising...");
+
+  u8g2.drawStr(10, 20, "Station Code:");
+  DisplayString(80, 20, stationCode);
+
+  u8g2.drawStr(10, 30, "WiFi Network:");
+  DisplayString(80, 30, wifiSsid);
+
+  u8g2.drawStr(10, 40, "IP Address:");
+  DisplayString(80, 40, ipAddress);
+
+//  u8g2.drawStr(80, 20, wifiSsid);
+//  u8g2.drawStr(80, 30, stationCode);
+  
+  
+  u8g2.sendBuffer();
+
+  //  display.drawString(5, 5, "Station:");
+//  display.drawString(5, 30, "Connecting...");
+//
+//  display.drawString(50, 5, stationCode);
+}
+
+void DisplayString(int x, int y, String str) {
+  char c[str.length() + 1];
+  str.toCharArray(c, str.length() + 1);
+  u8g2.drawStr(x, y, c);
+}
+
 void DisplayTimes() {
-  display.clear();
-
-  for (int i = 0; i < maxRows; i++) {
-    display.drawString(0, i * 10, runTimes[i]);
-    display.drawString(30, i * 10, destinations[i]);
-    display.setColor(BLACK);
-    display.fillRect(90,  i * 10, 42, 10);
-    display.setColor(WHITE);
-    display.drawString(93, i * 10, dueTimes[i]);
-  }
-
-  display.display();
+//  display.clear();
+//
+//  for (int i = 0; i < maxRows; i++) {
+//    display.drawString(0, i * 10, runTimes[i]);
+//    display.drawString(30, i * 10, destinations[i]);
+//    display.setColor(BLACK);
+//    display.fillRect(90,  i * 10, 42, 10);
+//    display.setColor(WHITE);
+//    display.drawString(93, i * 10, dueTimes[i]);
+//  }
+//
+//  display.display();
 }
 
