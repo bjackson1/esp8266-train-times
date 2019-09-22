@@ -49,7 +49,7 @@ const String httpRequest = "POST /OpenLDBWS/ldb9.asmx HTTP/1.1\r\n"
   "Content-Length: ";
 
 WiFiClientSecure client;
-U8G2_SSD1322_NHD_256X64_F_4W_SW_SPI u8g2(U8G2_R0, D5, D7, D8, D6);
+U8G2_SSD1322_NHD_256X64_F_4W_SW_SPI u8g2(U8G2_R2, D5, D7, D8, D6);
 
 
 void setup() {
@@ -348,7 +348,7 @@ void DisplayTime() {
   int timeWidth = MeasureString(hourMinute);
   int timeLeft = (256 - timeWidth) / 2;
 
-  u8g2.setFont(u8g2_font_crox1hb_tr);
+  u8g2.setFont(u8g2_font_bauhaus2015_tr);
   DisplayString(timeLeft, 64, hourMinute);
 }
 
@@ -357,7 +357,7 @@ void DisplayRow(int row, String runTime, String destination, String due) {
   int dueWidth = MeasureString(due);
   
   DisplayString(0, x, runTime);
-  DisplayString(30, x, destination);
+  DisplayString(35, x, destination);
   DisplayString(256 - dueWidth, x, due);
 }
 
