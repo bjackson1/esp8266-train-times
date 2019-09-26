@@ -149,8 +149,7 @@ void GetTrainTimes()
         Serial.println("Waiting for response...\n");
         while (!client.available())
         {
-            delay(50); //
-            //Serial.print(".");
+            delay(50);
         }
         String buf = "";
         String path = "";
@@ -333,7 +332,6 @@ bool ConnectWiFi()
             Serial.println(WiFi.localIP());
             ipAddress = WiFi.localIP().toString();
             DisplayIntro();
-            // wifiConnected = true;
             return true;
         }
         else
@@ -427,7 +425,6 @@ void DisplayString(int x, int y, String str)
     char c[str.length() + 1];
     str.toCharArray(c, str.length() + 1);
     u8g2.drawStr(x, y, c);
-    //  u8g2.sendBuffer();
 }
 
 int MeasureString(String str)
