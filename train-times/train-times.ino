@@ -87,8 +87,8 @@ void setup()
     u8g2.drawBox(239, 0, 14, 64);
     DisplayIntro();
     wifiConnected = ConnectWiFi();
-    // DisplayString(0, 64, "Getting train times...");
-    // u8g2.sendBuffer();
+    DisplayString(0, 64, "Getting train times...");
+    u8g2.sendBuffer();
 }
 
 void loop()
@@ -467,9 +467,9 @@ void DisplayTime()
     u8g2.setFont(u8g2_font_8x13B_mn);
     DisplayString(timeLeft, 64, hourMinute);
     u8g2.setFont(u8g2_font_7x13B_mr);
-    DisplayString(timeLeft + 44, 64, second);
+    DisplayString(timeLeft + 45, 64, second);
 
-    u8g2.drawBox(timeLeft + 40, 62, 2, 2);
+    u8g2.drawBox(timeLeft + 41, 62, 2, 2);
 
     u8g2.updateDisplayArea(11, 0, 10, 2);
 }
