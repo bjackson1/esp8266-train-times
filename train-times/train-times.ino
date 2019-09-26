@@ -7,6 +7,11 @@
 #include <U8x8lib.h>
 #include <Timezone.h>
 
+#include "SPI.h"
+#include "TFT_eSPI.h"
+
+
+
 char serialRead;
 String serialBuf;
 int wifiAttempts = 0;
@@ -14,9 +19,11 @@ bool wifiConnected = false;
 int nextConnect = 10000;
 String apiKey;
 String stationCode;
+String screenType;
 String wifiSsid = "acquiring...";
 String ipAddress = "acquiring...";
 String currentTime = "00:00";
+int displayWidth = 100;
 
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP);
@@ -29,7 +36,7 @@ Timezone ukTime(BST, GMT);
 time_t localTime;
 
 const char *server = "lite.realtime.nationalrail.co.uk";
-const int maxRows = 5;
+const int maxRows = 30;
 
 String destinations[maxRows];
 String runTimes[maxRows];
@@ -63,6 +70,8 @@ const String httpRequest = "POST /OpenLDBWS/ldb9.asmx HTTP/1.1\r\n"
 
 WiFiClientSecure client;
 U8G2_SSD1322_NHD_256X64_F_4W_SW_SPI u8g2(U8G2_R2, D5, D7, D8, D6);
+// Use hardware SPI
+TFT_eSPI tft = TFT_eSPI();
 
 void setup()
 {
@@ -72,23 +81,39 @@ void setup()
 
     timeClient.begin();
 
+
     Serial.println("\n\nok");
-    u8g2.begin();
+
+    screenType = ReadEepromWord(136, 8);
+
+    if (screenType == "TFT") {
+        tft.begin();
+        tft.setRotation(0);
+        displayWidth = 240;
+    } else if (screenType == "OLED") {
+        u8g2.begin();
+        displayWidth = u8g2.getDisplayWidth();
+    }
 
     Serial.print("Display width: ");
-    Serial.println(u8g2.getDisplayWidth());
+    Serial.println(displayWidth);
 
     apiKey = ReadEepromWord(64, 64);
     stationCode = ReadEepromWord(128, 8);
 
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+
+    // analogWrite(A0, 255);
+
     Serial.println("API Key: " + apiKey);
     Serial.println("Station Code: " + stationCode);
 
-    u8g2.drawBox(239, 0, 14, 64);
     DisplayIntro();
     wifiConnected = ConnectWiFi();
     DisplayString(0, 64, "Getting train times...");
-    u8g2.sendBuffer();
+    // u8g2.sendBuffer();
+    DisplaySend();
 }
 
 void loop()
@@ -356,6 +381,7 @@ void ParseWiFiCommands(char serialRead)
         ParseAndSaveParameter("WIFI_PWD", 32, serialBuf);
         ParseAndSaveParameter("API_KEY", 64, serialBuf);
         ParseAndSaveParameter("STATION_CODE", 128, serialBuf);
+        ParseAndSaveParameter("SCREEN_TYPE", 136, serialBuf);
 
         serialBuf = "";
     }
@@ -404,34 +430,75 @@ String padR(String str, int padLen, String padChar) {
 
 void DisplayIntro()
 {
-    u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_haxrcorp4089_tr);
-    u8g2.drawStr(0, 7, "Initialising...");
+    DisplayClear();
 
-    u8g2.drawStr(10, 20, "Station Code:");
+    SetFont(0);
+    DisplayString(0, 7, "Initialising...");
+
+    DisplayString(10, 20, "Station Code:");
     DisplayString(80, 20, stationCode);
 
-    u8g2.drawStr(10, 30, "WiFi Network:");
+    DisplayString(10, 30, "WiFi Network:");
     DisplayString(80, 30, wifiSsid);
 
-    u8g2.drawStr(10, 40, "IP Address:");
+    DisplayString(10, 40, "IP Address:");
     DisplayString(80, 40, ipAddress);
+}
 
-    u8g2.sendBuffer();
+void DisplayClear() {
+    if (screenType == "TFT") {
+        tft.fillScreen(TFT_BLACK);
+    } else if (screenType == "OLED") {
+        u8g2.clearBuffer();
+    }
+}
+
+void SetFont(int sizeIndex) {
+    if (screenType == "TFT") {
+        switch (sizeIndex)
+        {
+            case 0:
+                tft.setTextFont(0);
+                break;
+        }
+    } else if (screenType == "OLED") {
+        switch (sizeIndex)
+        {
+            case 0:
+                u8g2.setFont(u8g2_font_finderskeepers_tr);
+                break;
+        }
+    }
+}
+
+void DisplaySend() {
+    if (screenType == "OLED") {
+        u8g2.sendBuffer();
+    }
 }
 
 void DisplayString(int x, int y, String str)
 {
     char c[str.length() + 1];
     str.toCharArray(c, str.length() + 1);
-    u8g2.drawStr(x, y, c);
+
+    if (screenType == "TFT") {
+        tft.setCursor(x, y);
+        tft.print(str);
+    } else if (screenType == "OLED") {
+        u8g2.drawStr(x, y, c);
+    }
 }
 
 int MeasureString(String str)
 {
-    char c[str.length() + 1];
-    str.toCharArray(c, str.length() + 1);
-    return u8g2.getStrWidth(c);
+    if (screenType == "TFT") {
+        return str.length() * 6;
+    } else if (screenType == "OLED") {
+        char c[str.length() + 1];
+        str.toCharArray(c, str.length() + 1);
+        return u8g2.getStrWidth(c);
+    }
 }
 
 char *StringToChar(String str)
@@ -457,18 +524,18 @@ void DisplayTime()
     int timeWidth = 60;
     int timeLeft = 98;
 
-    u8g2.setDrawColor(0);
-    u8g2.drawBox(timeLeft, 52, timeWidth, 12);
-    u8g2.setDrawColor(1);
+    // u8g2.setDrawColor(0);
+    // u8g2.drawBox(timeLeft, 52, timeWidth, 12);
+    // u8g2.setDrawColor(1);
 
-    u8g2.setFont(u8g2_font_8x13B_mn);
+    // u8g2.setFont(u8g2_font_8x13B_mn);
     DisplayString(timeLeft, 64, hourMinute);
-    u8g2.setFont(u8g2_font_7x13B_mr);
+    // u8g2.setFont(u8g2_font_7x13B_mr);
     DisplayString(timeLeft + 45, 64, second);
 
-    u8g2.drawBox(timeLeft + 41, 62, 2, 2);
+    // u8g2.drawBox(timeLeft + 41, 62, 2, 2);
 
-    u8g2.updateDisplayArea(11, 0, 10, 2);
+    // u8g2.updateDisplayArea(11, 0, 10, 2);
 }
 
 void DisplayRow(int row, String runTime, String destination, String due)
@@ -478,21 +545,21 @@ void DisplayRow(int row, String runTime, String destination, String due)
 
     DisplayString(0, x, runTime);
     DisplayString(35, x, destination);
-    DisplayString(256 - dueWidth, x, due);
+    DisplayString(displayWidth - dueWidth, x, due);
 }
 
 void DisplayTimetable()
 {
-    u8g2.clearBuffer();
-
+    DisplayClear();
     DisplayTime();
 
-    u8g2.setFont(u8g2_font_finderskeepers_tr);
+    SetFont(0);
 
     for (int i = 0; i < maxRows; i++)
     {
         DisplayRow(i, runTimes[i], destinations[i], dueTimes[i]);
     }
 
-    u8g2.sendBuffer();
+    DisplaySend();
+    // u8g2.sendBuffer();
 }
