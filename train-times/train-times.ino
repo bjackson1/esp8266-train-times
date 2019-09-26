@@ -1,8 +1,11 @@
 #include <EEPROM.h>
 #include <ESP8266WiFi.h>
 #include <WiFiClientSecure.h>
+#include <WiFiUdp.h>
+#include <NTPClient.h>
 #include <U8g2lib.h>
 #include <U8x8lib.h>
+#include <Timezone.h>
 
 char serialRead;
 String serialBuf;
@@ -14,6 +17,16 @@ String stationCode;
 String wifiSsid = "acquiring...";
 String ipAddress = "acquiring...";
 String currentTime = "00:00";
+
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP);
+int timeMillisBaseline = 0;
+int nextTimeSync = 0;
+int nextTimeDisplayUpdate = 0;
+TimeChangeRule BST = {"BST", Last, Sun, Mar, 2, 60};     // British Summer Time
+TimeChangeRule GMT = {"GMT", Last, Sun, Oct, 3, 0};      // GMT
+Timezone ukTime(BST, GMT);
+time_t localTime;
 
 const char *server = "lite.realtime.nationalrail.co.uk";
 const int maxRows = 5;
@@ -56,6 +69,9 @@ void setup()
     Serial.begin(115200);
     EEPROM.begin(1024);
     client.setInsecure();
+
+    timeClient.begin();
+
     Serial.println("\n\nok");
     u8g2.begin();
 
@@ -70,9 +86,9 @@ void setup()
 
     u8g2.drawBox(239, 0, 14, 64);
     DisplayIntro();
-    ConnectWiFi();
-    DisplayString(0, 64, "Getting train times...");
-    u8g2.sendBuffer();
+    wifiConnected = ConnectWiFi();
+    // DisplayString(0, 64, "Getting train times...");
+    // u8g2.sendBuffer();
 }
 
 void loop()
@@ -83,11 +99,33 @@ void loop()
         Serial.print(serialRead);
         ParseWiFiCommands(serialRead);
     }
-    if (millis() > nextConnect)
-    {
-        GetTrainTimes();
-        Serial.println("\n\nWaiting 90 seconds until next download...");
-        nextConnect = millis() + 90000;
+
+    if (wifiConnected) {
+        if (millis() > nextTimeSync) {
+            Serial.println("Getting time from NTP...");
+            while(timeClient.getEpochTime() < 1569503684) {
+                timeClient.update();
+                Serial.print("NTP Time: ");
+                Serial.println(timeClient.getEpochTime());
+                delay(1000);
+            }
+
+            timeMillisBaseline = timeClient.getEpochTime() - (millis() / 1000);
+            nextTimeSync = millis() + 3 * 60 * 60 * 1000;
+        }
+
+        if (millis() > nextConnect)
+        {
+            GetTrainTimes();
+            Serial.println("\n\nWaiting 90 seconds until next download...");
+            nextConnect = millis() + 90 * 1000;
+        }
+
+        if (millis() > nextTimeDisplayUpdate) {
+            localTime = ukTime.toLocal(timeMillisBaseline + (millis() / 1000));
+            DisplayTime();
+            nextTimeDisplayUpdate = (millis() - (millis() % 1000)) + 1000;
+        }
     }
 }
 
@@ -269,7 +307,7 @@ byte GetStringChecksum(String toChecksum)
     return crc;
 }
 
-void ConnectWiFi()
+bool ConnectWiFi()
 {
     Serial.println("Reading WiFi Credentials from EEPROM... ");
     wifiSsid = ReadEepromWord(0, 32);
@@ -295,16 +333,19 @@ void ConnectWiFi()
             Serial.println(WiFi.localIP());
             ipAddress = WiFi.localIP().toString();
             DisplayIntro();
-            wifiConnected = true;
+            // wifiConnected = true;
+            return true;
         }
         else
         {
             Serial.println("WARN: Failed to connect to WiFi");
+            return false;
         }
     }
     else
     {
         Serial.println("WARN: WiFi credentials not configured");
+        return false;
     }
 }
 
@@ -342,12 +383,25 @@ void ParseAndSaveParameter(String parameterName, int eepromOffset, String rawStr
 
 String pad(String str, int padLen)
 {
+    return pad(str, padLen, " ");
+}
+
+String pad(String str, int padLen, String padChar)
+{
     String ret = "";
     for (int i = 0; i < padLen - str.length(); i++)
     {
-        ret = ret + ' ';
+        ret = ret + padChar;
     }
     return ret;
+}
+
+String padL(String str, int padLen, String padChar) {
+    return pad(str, padLen, padChar) + str;
+}
+
+String padR(String str, int padLen, String padChar) {
+    return str + pad(str, padLen, padChar);
 }
 
 void DisplayIntro()
@@ -393,14 +447,31 @@ char *StringToChar(String str)
 
 void DisplayTime()
 {
-    String timePart = currentTime.substring(currentTime.indexOf('T') + 1);
-    String hourMinute = timePart.substring(0, 5);
+    String bareHour = String(hour(localTime));
+    String bareMinute = String(minute(localTime));
+    String bareSecond = String(second(localTime));
 
-    int timeWidth = MeasureString(hourMinute);
-    int timeLeft = (256 - timeWidth) / 2;
+    String hour = padL(bareHour, 2, "0");
+    String minute = padL(bareMinute, 2, "0");
+    String second = padL(bareSecond, 2, "0");
 
-    u8g2.setFont(u8g2_font_bauhaus2015_tr);
+    String hourMinute = hour + ":" + minute;
+
+    int timeWidth = 60;
+    int timeLeft = 98;
+
+    u8g2.setDrawColor(0);
+    u8g2.drawBox(timeLeft, 52, timeWidth, 12);
+    u8g2.setDrawColor(1);
+
+    u8g2.setFont(u8g2_font_8x13B_mn);
     DisplayString(timeLeft, 64, hourMinute);
+    u8g2.setFont(u8g2_font_7x13B_mr);
+    DisplayString(timeLeft + 44, 64, second);
+
+    u8g2.drawBox(timeLeft + 40, 62, 2, 2);
+
+    u8g2.updateDisplayArea(11, 0, 10, 2);
 }
 
 void DisplayRow(int row, String runTime, String destination, String due)
