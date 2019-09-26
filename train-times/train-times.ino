@@ -1,3 +1,5 @@
+#define ENCODER_DO_NOT_USE_INTERRUPTS
+
 #include <EEPROM.h>
 #include <ESP8266WiFi.h>
 #include <WiFiClientSecure.h>
@@ -10,7 +12,14 @@
 #include "SPI.h"
 #include "TFT_eSPI.h"
 
+#include <Encoder.h>
 
+const long encoderResetPosition = 1000000;
+Encoder myEnc(D2, D1);
+long oldPosition = encoderResetPosition;
+volatile boolean isButtonPressed = false;
+long lastUpdateMillis = 0;
+long lastRotaryUpdate = 0;
 
 char serialRead;
 String serialBuf;
@@ -36,13 +45,19 @@ Timezone ukTime(BST, GMT);
 time_t localTime;
 
 const char *server = "lite.realtime.nationalrail.co.uk";
-const int maxRows = 30;
+const int maxQueryRows = 50;
+int maxDisplayRows = 5;
+int retrievedRows = 0;
 
-String destinations[maxRows];
-String runTimes[maxRows];
-String dueTimes[maxRows];
-String platforms[maxRows];
-String carriages[maxRows];
+String destinations[maxQueryRows];
+String destinationCodes[maxQueryRows];
+String runTimes[maxQueryRows];
+String dueTimes[maxQueryRows];
+String platforms[maxQueryRows];
+String carriages[maxQueryRows];
+String uniqueDestinationCodes[maxQueryRows + 1];
+int uniqueDestinationsCount = 1;
+int uniqueDestinationSelected = -1;
 
 const String soapBody1 = "<soap:Envelope"
                          " xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\""
@@ -73,6 +88,10 @@ U8G2_SSD1322_NHD_256X64_F_4W_SW_SPI u8g2(U8G2_R2, D5, D7, D8, D6);
 // Use hardware SPI
 TFT_eSPI tft = TFT_eSPI();
 
+ICACHE_RAM_ATTR void handleKey()
+{
+    isButtonPressed = true;
+}
 void setup()
 {
     Serial.begin(115200);
@@ -81,6 +100,10 @@ void setup()
 
     timeClient.begin();
 
+    pinMode(D5, INPUT_PULLUP);
+    attachInterrupt(D5, handleKey, RISING);
+    myEnc.write(encoderResetPosition * 4);
+    uniqueDestinationCodes[0] = "ALL";
 
     Serial.println("\n\nok");
 
@@ -90,9 +113,13 @@ void setup()
         tft.begin();
         tft.setRotation(0);
         displayWidth = 240;
+        maxDisplayRows = 28;
+        tft.fillScreen(TFT_BLACK);
+        tft.setTextColor(0xFF20, TFT_BLACK);
     } else if (screenType == "OLED") {
         u8g2.begin();
         displayWidth = u8g2.getDisplayWidth();
+        maxDisplayRows = 5;
     }
 
     Serial.print("Display width: ");
@@ -101,10 +128,8 @@ void setup()
     apiKey = ReadEepromWord(64, 64);
     stationCode = ReadEepromWord(128, 8);
 
-    tft.fillScreen(TFT_BLACK);
-    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
 
-    // analogWrite(A0, 255);
+    analogWrite(A0, 1024);
 
     Serial.println("API Key: " + apiKey);
     Serial.println("Station Code: " + stationCode);
@@ -151,6 +176,31 @@ void loop()
             DisplayTime();
             nextTimeDisplayUpdate = (millis() - (millis() % 1000)) + 1000;
         }
+
+        long newPosition = myEnc.read() / 4;
+        if (newPosition != oldPosition)
+        {
+            oldPosition = newPosition;
+            SelectDestination(newPosition);
+            lastRotaryUpdate = millis();
+        }
+
+        if (lastRotaryUpdate > 0 && (millis() - lastRotaryUpdate) > 5000)
+        {
+            lastRotaryUpdate = 0;
+            myEnc.write(encoderResetPosition * 4);
+            oldPosition = encoderResetPosition;
+            newPosition = encoderResetPosition;
+            Serial.println("rotary reset");
+        }
+
+        // software debounce
+        if (isButtonPressed && millis() - lastUpdateMillis > 250)
+        {
+            isButtonPressed = false;
+            lastUpdateMillis = millis();
+            Serial.println("button");
+        }
     }
 }
 
@@ -164,7 +214,7 @@ void GetTrainTimes()
     else
     {
         Serial.println("Connected to server!");
-        String body = soapBody1 + apiKey + soapBody2 + String(maxRows) + soapBody3 + stationCode + soapBody4;
+        String body = soapBody1 + apiKey + soapBody2 + String(maxQueryRows) + soapBody3 + stationCode + soapBody4;
 
         client.print(httpRequest);
         client.println(body.length());
@@ -180,90 +230,105 @@ void GetTrainTimes()
         String path = "";
         bool readingElementName = false;
         int serviceIndex = -1;
+        retrievedRows = 0;
+        uniqueDestinationsCount = 0;
 
-        /* if data is available then receive and print to Terminal */
-        while (client.available())
+        while (client.connected())
         {
-            char c = client.read();
-            buf = buf + c;
-            if (c == '<')
+            /* if data is available then receive and print to Terminal */
+            while (client.available())
             {
-                readingElementName = true;
-                if (buf.length() > 1)
+                char c = client.read();
+                buf = buf + c;
+                if (c == '<')
+                {
+                    readingElementName = true;
+                    if (buf.length() > 1)
+                    {
+                        buf = buf.substring(0, buf.length() - 1);
+                        if (path == "/?xml/soap:Envelope/soap:Body/GetDepartureBoardResponse/GetStationBoardResult/lt5:trainServices/lt5:service/lt5:destination/lt4:location/lt4:locationName")
+                        {
+                            destinations[serviceIndex] = buf;
+                        }
+                        else if (path == "/?xml/soap:Envelope/soap:Body/GetDepartureBoardResponse/GetStationBoardResult/lt5:trainServices/lt5:service/lt5:destination/lt4:location/lt4:crs")
+                        {
+                            destinationCodes[serviceIndex] = buf;
+                            AddUniqueDestinationCode(buf);
+                        }
+                        else if (path == "/?xml/soap:Envelope/soap:Body/GetDepartureBoardResponse/GetStationBoardResult/lt5:trainServices/lt5:service/lt4:std")
+                        {
+                            runTimes[serviceIndex] = buf;
+                        }
+                        else if (path == "/?xml/soap:Envelope/soap:Body/GetDepartureBoardResponse/GetStationBoardResult/lt5:trainServices/lt5:service/lt4:etd")
+                        {
+                            dueTimes[serviceIndex] = buf;
+                        }
+                        else if (path == "/?xml/soap:Envelope/soap:Body/GetDepartureBoardResponse/GetStationBoardResult/lt5:trainServices/lt5:service/lt4:platform")
+                        {
+                            platforms[serviceIndex] = buf;
+                        }
+                        else if (path == "/?xml/soap:Envelope/soap:Body/GetDepartureBoardResponse/GetStationBoardResult/lt5:trainServices/lt5:service/lt4:length")
+                        {
+                            carriages[serviceIndex] = buf;
+                        }
+                        else if (path == "/?xml/soap:Envelope/soap:Body/GetDepartureBoardResponse/GetStationBoardResult/lt4:generatedAt")
+                        {
+                            currentTime = buf;
+                        }
+                    }
+
+                    buf = "";
+                }
+                else if (readingElementName && buf.length() > 1 && (c == ' ' || c == '>' || c == '/'))
                 {
                     buf = buf.substring(0, buf.length() - 1);
-                    if (path == "/?xml/soap:Envelope/soap:Body/GetDepartureBoardResponse/GetStationBoardResult/lt5:trainServices/lt5:service/lt5:destination/lt4:location/lt4:locationName")
+                    if (buf[0] == '/')
                     {
-                        destinations[serviceIndex] = buf;
+                        path = path.substring(0, path.length() - buf.length());
                     }
-                    else if (path == "/?xml/soap:Envelope/soap:Body/GetDepartureBoardResponse/GetStationBoardResult/lt5:trainServices/lt5:service/lt4:std")
+                    else
                     {
-                        runTimes[serviceIndex] = buf;
+                        path = path + '/' + buf;
                     }
-                    else if (path == "/?xml/soap:Envelope/soap:Body/GetDepartureBoardResponse/GetStationBoardResult/lt5:trainServices/lt5:service/lt4:etd")
+                    if (buf == "lt5:service")
                     {
-                        dueTimes[serviceIndex] = buf;
+                        ++serviceIndex;
+                        ++retrievedRows;
                     }
-                    else if (path == "/?xml/soap:Envelope/soap:Body/GetDepartureBoardResponse/GetStationBoardResult/lt5:trainServices/lt5:service/lt4:platform")
-                    {
-                        platforms[serviceIndex] = buf;
-                    }
-                    else if (path == "/?xml/soap:Envelope/soap:Body/GetDepartureBoardResponse/GetStationBoardResult/lt5:trainServices/lt5:service/lt4:length")
-                    {
-                        carriages[serviceIndex] = buf;
-                    }
-                    else if (path == "/?xml/soap:Envelope/soap:Body/GetDepartureBoardResponse/GetStationBoardResult/lt4:generatedAt")
-                    {
-                        currentTime = buf;
-                    }
+                    readingElementName = false;
+                    buf = "";
                 }
+            }
 
-                buf = "";
-            }
-            else if (readingElementName && buf.length() > 1 && (c == ' ' || c == '>' || c == '/'))
-            {
-                buf = buf.substring(0, buf.length() - 1);
-                if (buf[0] == '/')
-                {
-                    path = path.substring(0, path.length() - buf.length());
-                }
-                else
-                {
-                    path = path + '/' + buf;
-                }
-                if (buf == "lt5:service")
-                {
-                    serviceIndex++;
-                }
-                readingElementName = false;
-                buf = "";
-            }
+            Serial.print("*");
+            delay(10);
         }
-        Serial.println("Time   Destination               Due       Platform  Cars");
-        Serial.println("-----  ------------------------  -------  --------  ----");
-        for (int i = 0; i < maxRows; i++)
+
+        Serial.println();
+        Serial.println("Server disconnected");
+        client.stop();
+
+        Serial.println("Query returned " + String(retrievedRows) + " services.\n");
+        Serial.println("Time   Code  Destination                     Due         Platform  Cars");
+        Serial.println("-----  ----  ------------------------------  ----------  --------  ----");
+        for (int i = 0; i < retrievedRows; i++)
         {
             Serial.print(runTimes[i]);
             Serial.print("  ");
-            Serial.print(destinations[i] + pad(destinations[i], 24));
+            Serial.print(destinationCodes[i] + pad(destinationCodes[i], 4));
+            Serial.print("  ");
+            Serial.print(destinations[i] + pad(destinations[i], 30));
             Serial.print("  ");
             Serial.print(pad(dueTimes[i], 10) + dueTimes[i]);
             Serial.print("  ");
             Serial.print(pad(platforms[i], 8) + platforms[i]);
             Serial.print("  ");
             Serial.print(pad(carriages[i], 4) + carriages[i]);
-            Serial.print("\n");
+            Serial.println("");
         }
 
+        DisplayUniqueDestinationCodes();
         DisplayTimetable();
-
-        /* if the server disconnected, stop the client */
-        if (!client.connected())
-        {
-            Serial.println();
-            Serial.println("Server disconnected");
-            client.stop();
-        }
     }
 }
 
@@ -299,6 +364,39 @@ String ReadEepromWord(int offset, int len)
     }
     return "";
 }
+
+// void WriteEepromWord(String wrd, int offset)
+// {
+//     byte checksum = GetStringChecksum(wrd);
+//     EEPROM.write(offset, checksum);
+
+//     for (int i; i < wrd.length(); i++)
+//     {
+//         EEPROM.write(offset + i + 1, char(wrd[i]));
+//     }
+//     EEPROM.write(offset + wrd.length() + 1, 0);
+//     EEPROM.commit();
+// }
+
+// String ReadEepromWord(int offset, int len)
+// {
+//     String ret = "";
+//     byte checksum = EEPROM.read(offset);
+//     for (int i = offset + 1; i <= offset + len; i++)
+//     {
+//         char c = EEPROM.read(i);
+//         if (c == 0)
+//         {
+//             if (ValidateChecksum(ret, checksum))
+//             {
+//                 return ret;
+//             }
+//             return "";
+//         }
+//         ret = ret + c;
+//     }
+//     return "";
+// }
 
 bool ValidateChecksum(String wrd, byte expectedChecksum)
 {
@@ -460,12 +558,18 @@ void SetFont(int sizeIndex) {
             case 0:
                 tft.setTextFont(0);
                 break;
+            case 1:
+                tft.setTextFont(2);
+                break;
         }
     } else if (screenType == "OLED") {
         switch (sizeIndex)
         {
             case 0:
                 u8g2.setFont(u8g2_font_finderskeepers_tr);
+                break;
+            case 1:
+                u8g2.setFont(u8g2_font_8x13B_mn);
                 break;
         }
     }
@@ -524,14 +628,22 @@ void DisplayTime()
     int timeWidth = 60;
     int timeLeft = 98;
 
+    int timeYPos = 64;
+
+    if (screenType = "TFT") {
+        timeYPos = 300;
+    }
+
     // u8g2.setDrawColor(0);
     // u8g2.drawBox(timeLeft, 52, timeWidth, 12);
     // u8g2.setDrawColor(1);
 
     // u8g2.setFont(u8g2_font_8x13B_mn);
-    DisplayString(timeLeft, 64, hourMinute);
+
+    SetFont(1);
+    DisplayString(timeLeft, timeYPos, hourMinute);
     // u8g2.setFont(u8g2_font_7x13B_mr);
-    DisplayString(timeLeft + 45, 64, second);
+    DisplayString(timeLeft + 45, timeYPos, second);
 
     // u8g2.drawBox(timeLeft + 41, 62, 2, 2);
 
@@ -555,11 +667,53 @@ void DisplayTimetable()
 
     SetFont(0);
 
-    for (int i = 0; i < maxRows; i++)
+    for (int i = 0; i < maxDisplayRows; i++)
     {
         DisplayRow(i, runTimes[i], destinations[i], dueTimes[i]);
     }
 
     DisplaySend();
     // u8g2.sendBuffer();
+}
+
+void AddUniqueDestinationCode(String destinationCode)
+{
+    for (int i = 0; i < uniqueDestinationsCount; i++)
+    {
+        if (uniqueDestinationCodes[i] == destinationCode)
+        {
+            return;
+        }
+    }
+
+    uniqueDestinationCodes[1 + uniqueDestinationsCount++] = destinationCode;
+}
+
+void DisplayUniqueDestinationCodes()
+{
+    for (int i = 0; i < uniqueDestinationsCount; i++)
+    {
+        if (uniqueDestinationSelected == i)
+        {
+            Serial.print("  *");
+        }
+        else
+        {
+            Serial.print("   ");
+        }
+
+        Serial.print(uniqueDestinationCodes[i]);
+    }
+
+    Serial.println();
+}
+
+void SelectDestination(int encoderPosition)
+{
+    int positionCorrection = (encoderResetPosition % uniqueDestinationsCount) + 1;
+    Serial.print(encoderPosition);
+    Serial.print("   ");
+    uniqueDestinationSelected = (encoderPosition - positionCorrection) % uniqueDestinationsCount;
+    Serial.print(uniqueDestinationSelected);
+    DisplayUniqueDestinationCodes();
 }
