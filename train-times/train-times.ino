@@ -166,9 +166,14 @@ void loop()
 
         if (millis() > nextConnect)
         {
+            int nextSeconds = 90;
+            if (hour(localTime) == 7 || hour(localTime) == 8) {
+                nextSeconds = 30;
+            }
+
             GetTrainTimes();
-            Serial.println("\n\nWaiting 90 seconds until next download...");
-            nextConnect = millis() + 90 * 1000;
+            Serial.println("\n\nWaiting " + String(nextSeconds) + " seconds until next download...");
+            nextConnect = millis() + nextSeconds * 1000;
         }
 
         if (millis() > nextTimeDisplayUpdate) {
