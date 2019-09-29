@@ -12,6 +12,19 @@
 #include "SPI.h"
 #include "TFT_eSPI.h"
 
+// // Stock font and GFXFF reference handle
+// #define GFXFF 1
+// #define FF18 &FreeSans12pt7b
+
+// // Custom are fonts added to library "TFT_eSPI\Fonts\Custom" folder
+// // a #include must also be added to the "User_Custom_Fonts.h" file
+// // in the "TFT_eSPI\User_Setups" folder. See example entries.
+// #define CF_OL24 &Orbitron_Light_24
+// #define CF_OL32 &Orbitron_Light_32
+// #define CF_RT24 &Roboto_Thin_24
+// #define CF_S24  &Satisfy_24
+// #define CF_Y32  &Yellowtail_32
+
 #include <Encoder.h>
 
 const long encoderResetPosition = 1000000;
@@ -111,11 +124,12 @@ void setup()
 
     if (screenType == "TFT") {
         tft.begin();
-        tft.setRotation(0);
-        displayWidth = 240;
-        maxDisplayRows = 28;
+        tft.setRotation(1);
+        displayWidth = 320;
+        maxDisplayRows = 16;
         tft.fillScreen(TFT_BLACK);
-        tft.setTextColor(0xFF20, TFT_BLACK);
+        tft.setTextColor(0xFE00, TFT_BLACK);
+        // tft.setTextColor(TFT_BLUE, TFT_BLACK);
     } else if (screenType == "OLED") {
         u8g2.begin();
         displayWidth = u8g2.getDisplayWidth();
@@ -539,13 +553,13 @@ void DisplayIntro()
     DisplayString(0, 7, "Initialising...");
 
     DisplayString(10, 20, "Station Code:");
-    DisplayString(80, 20, stationCode);
+    DisplayString(100, 20, stationCode);
 
     DisplayString(10, 30, "WiFi Network:");
-    DisplayString(80, 30, wifiSsid);
+    DisplayString(100, 30, wifiSsid);
 
     DisplayString(10, 40, "IP Address:");
-    DisplayString(80, 40, ipAddress);
+    DisplayString(100, 40, ipAddress);
 }
 
 void DisplayClear() {
@@ -564,7 +578,7 @@ void SetFont(int sizeIndex) {
                 tft.setTextFont(0);
                 break;
             case 1:
-                tft.setTextFont(2);
+                tft.setTextFont(4);
                 break;
         }
     } else if (screenType == "OLED") {
@@ -636,7 +650,7 @@ void DisplayTime()
     int timeYPos = 64;
 
     if (screenType = "TFT") {
-        timeYPos = 300;
+        timeYPos = 216;
     }
 
     // u8g2.setDrawColor(0);
@@ -648,20 +662,22 @@ void DisplayTime()
     SetFont(1);
     DisplayString(timeLeft, timeYPos, hourMinute);
     // u8g2.setFont(u8g2_font_7x13B_mr);
-    DisplayString(timeLeft + 45, timeYPos, second);
+    DisplayString(timeLeft + 75, timeYPos, second);
 
     // u8g2.drawBox(timeLeft + 41, 62, 2, 2);
 
     // u8g2.updateDisplayArea(11, 0, 10, 2);
 }
 
-void DisplayRow(int row, String runTime, String destination, String due)
+void DisplayRow(int row, String runTime, String destination, String due, String platform)
 {
     int x = ((row + 1) * 10) - 1;
     int dueWidth = MeasureString(due);
+    int platformWidth = MeasureString(platform);
 
     DisplayString(0, x, runTime);
     DisplayString(35, x, destination);
+    DisplayString(260 - platformWidth, x, platform);
     DisplayString(displayWidth - dueWidth, x, due);
 }
 
@@ -674,7 +690,7 @@ void DisplayTimetable()
 
     for (int i = 0; i < maxDisplayRows; i++)
     {
-        DisplayRow(i, runTimes[i], destinations[i], dueTimes[i]);
+        DisplayRow(i, runTimes[i], destinations[i], dueTimes[i], platforms[i]);
     }
 
     DisplaySend();
