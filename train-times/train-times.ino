@@ -67,7 +67,7 @@ U8G2_SSD1322_NHD_256X64_F_4W_SW_SPI u8g2(U8G2_R2, D5, D7, D8, D6);
 void setup()
 {
     Serial.begin(115200);
-    EEPROM.begin(1024);
+    EEPROM.begin(256);
     client.setInsecure();
 
     timeClient.begin();
@@ -75,12 +75,16 @@ void setup()
     Serial.println("\n\nok");
     u8g2.begin();
 
-    Serial.print("Display width: ");
-    Serial.println(u8g2.getDisplayWidth());
+    Serial.print("Display size: ");
+    Serial.print(u8g2.getDisplayWidth());
+    Serial.print(" x ");
+    Serial.println(u8g2.getDisplayHeight());
 
     apiKey = ReadEepromWord(64, 64);
     stationCode = ReadEepromWord(128, 8);
-
+    String ssid = ReadEepromWord(0, 32);
+    
+    Serial.println("WiFi SSID: " + ssid);
     Serial.println("API Key: " + apiKey);
     Serial.println("Station Code: " + stationCode);
 
@@ -132,6 +136,11 @@ void loop()
             nextTimeDisplayUpdate = (millis() - (millis() % 1000)) + 1000;
         }
     }
+//    else
+//    {
+//        Serial.println("WiFi not available");
+//        delay(1000);
+//    }
 }
 
 void GetTrainTimes()
@@ -371,6 +380,8 @@ void ParseWiFiCommands(char serialRead)
     }
 }
 
+void(* resetSoftware)(void) = 0;
+
 void ParseAndSaveParameter(String parameterName, int eepromOffset, String rawString)
 {
     if (rawString.length() > parameterName.length())
@@ -379,7 +390,12 @@ void ParseAndSaveParameter(String parameterName, int eepromOffset, String rawStr
         {
             String parameterValue = rawString.substring(parameterName.length() + 1, rawString.length());
             WriteEepromWord(parameterValue, eepromOffset);
-            Serial.print("Saved " + parameterName + " = '" + parameterValue + "'");
+            Serial.println("Saved " + parameterName + " = '" + parameterValue + "'");
+
+//            String stored = ReadEepromWord(eepromOffset, parameterName.length());
+//            Serial.println("Read: " + stored);
+//
+//            resetSoftware();
         }
     }
 }
